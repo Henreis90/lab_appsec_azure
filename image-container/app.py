@@ -1,96 +1,122 @@
+import json
 import os
-import time
+from functools import wraps
 from flask import Flask, jsonify, request
 import hvac
+import jwt  # Biblioteca PyJWT
 import pymssql
+import requests
 
 app = Flask(__name__)
 
-# Configurações do Vault e do Servidor pegas via Variáveis de Ambiente
+# URL interna onde o Keycloak expõe as chaves públicas (JWKS)
+# Usamos o realm padrão 'master' para simplificar o lab
+KEYCLOAK_JWKS_URL = "http://keycloak:8080/realms/master/protocol/openid-connect/certs"
+
+# Configurações do Vault e do Servidor
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8200")
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "root-token-seguro")
 DB_SERVER = os.environ.get("DB_SERVER", "db")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
 
 
+#def get_jwt_secret_from_vault():
+#  """Busca a chave secreta do JWT (ou usa a mesma do db) no Vault."""
+#  try:
+#    client = hvac.Client(url=VAULT_URL, token=VAULT_TOKEN)
+#    secret_response = client.secrets.kv.v2.read_secret_version(
+#        mount_point="secret", path="db"
+#    )
+#    # Para simplificar o lab, podemos usar a senha do banco ou uma chave específica do Vault como segredo do JWT
+#    return secret_response["data"]["data"]["password"]
+#  except Exception as e:
+#    print(f"Erro ao buscar segredo do JWT no Vault: {e}")
+#    return "fallback-secret-key"
+
+
 def get_db_credentials_from_vault():
-  """Busca as credenciais do banco de dados dinamicamente no HashiCorp Vault."""
   try:
     client = hvac.Client(url=VAULT_URL, token=VAULT_TOKEN)
-
-    # Lê o segredo do caminho 'secret/data/db' (KV Versão 2)
     secret_response = client.secrets.kv.v2.read_secret_version(
         mount_point="secret", path="db"
     )
-
-    db_user = secret_response["data"]["data"]["user"]
-    db_pass = secret_response["data"]["data"]["password"]
-    return db_user, db_pass
+    return (
+        secret_response["data"]["data"]["user"],
+        secret_response["data"]["data"]["password"],
+    )
   except Exception as e:
-    print(f"Erro ao buscar credenciais no Vault: {e}")
-    # Fallback opcional caso queira seguranca local de emergencia, ou lance a excecao
     raise e
 
 
 def get_db_connection():
-  # Pega as credenciais atualizadas do Vault a cada nova conexão (ou você pode cachear se preferir)
   db_user, db_pass = get_db_credentials_from_vault()
   return pymssql.connect(
       server=DB_SERVER, user=db_user, password=db_pass, database=DB_NAME
   )
 
 
-# Loop de tentativas para aguardar o SQL Server subir
-print("Aguardando o SQL Server ficar pronto...")
-connected = False
-attempts = 15  # Tenta por até 45 segundos (15 * 3s)
+# --- DECORADOR DE VALIDAÇÃO DE JWT (O "Segurança" da API) ---
+def token_required(f):
+  @wraps(f)
+  def decorated(*args, **kwargs):
+    token = None
+    if "Authorization" in request.headers:
+      auth_header = request.headers["Authorization"]
+      try:
+        token = auth_header.split(" ")[1]
+      except IndexError:
+        return (
+            jsonify({"error": "Token mal formatado. Use Bearer <token>"}),
+            401,
+        )
 
-while attempts > 0 and not connected:
-  try:
-    # Para validar a conexão inicial e criar o banco, precisamos das credenciais do Vault
-    db_user, db_pass = get_db_credentials_from_vault()
+    if not token:
+      return jsonify({"error": "Token de autenticação ausente!"}), 401
 
-    conn_master = pymssql.connect(
-        server=DB_SERVER, user=db_user, password=db_pass, database="master"
-    )
-    conn_master.autocommit(True)
-    cursor_master = conn_master.cursor()
-    cursor_master.execute(f"""
-            IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{DB_NAME}')
-            CREATE DATABASE {DB_NAME}
-        """)
-    conn_master.close()
-    connected = True
-    print("Conectado ao SQL Server e credenciais validadas via Vault!")
-  except Exception as e:
-    print(
-        f"Banco/Vault ainda iniciando... Tentativas restantes: {attempts}."
-        f" Erro: {e}"
-    )
-    time.sleep(3)
-    attempts -= 1
+    try:
+      # 1. Pega o cabeçalho do token para descobrir qual 'kid' (Key ID) foi usado para assinar
+      unverified_header = jwt.get_unverified_header(token)
+      kid = unverified_header.get("kid")
 
-if not connected:
-  print("ERRO: Não foi possível conectar ao SQL Server após várias tentativas.")
+      # 2. Baixa o conjunto de chaves públicas do Keycloak (JWKS)
+      jwks_response = requests.get(KEYCLOAK_JWKS_URL)
+      jwks = jwks_response.json()
 
-# Inicializa a tabela caso tenha conectado
-if connected:
-  try:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='items' and xtype='U')
-            CREATE TABLE items (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                description VARCHAR(255)
-            )
-        """)
-    conn.commit()
-    conn.close()
-    print("Tabela 'items' verificada/criada com sucesso!")
-  except Exception as e:
-    print(f"Erro ao criar tabela: {e}")
+      # 3. Encontra a chave pública correspondente ao 'kid' do token
+      public_key = None
+      for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+          # Converte a chave JWK para o formato PEM que o PyJWT entende
+          public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+          break
+
+      if not public_key:
+        return (
+            jsonify({"error": "Chave pública não encontrada para este token"}),
+            401,
+        )
+
+      # 4. Valida a assinatura, expiração e o emissor usando a chave pública do Keycloak
+      data = jwt.decode(
+          token,
+          public_key,
+          algorithms=["RS256"],
+          options={
+              "verify_audience": False
+          },  # Ajuste conforme as configurações de client do Keycloak se necessário
+      )
+      current_user = data.get("preferred_username") or data.get("sub")
+
+    except jwt.ExpiredSignatureError:
+      return jsonify({"error": "Token do Keycloak expirado!"}), 401
+    except jwt.InvalidTokenError as e:
+      return jsonify({"error": f"Token inválido: {str(e)}"}), 401
+    except Exception as e:
+      return jsonify({"error": f"Erro na validação do token: {str(e)}"}), 500
+
+    return f(*args, **kwargs)
+
+  return decorated
 
 
 @app.route("/", methods=["GET"])
@@ -98,8 +124,9 @@ def home():
   return jsonify({"status": "API AppSec Lab rodando com sucesso!"})
 
 
-# GET: Listar todos os itens
+# GET: Listar itens (Protegido por JWT)
 @app.route("/items", methods=["GET"])
+@token_required
 def get_items():
   try:
     conn = get_db_connection()
@@ -112,8 +139,9 @@ def get_items():
     return jsonify({"error": str(e)}), 500
 
 
-# POST: Criar um item
+# POST: Criar item (Protegido por JWT)
 @app.route("/items", methods=["POST"])
+@token_required
 def create_item():
   data = request.json
   name = data.get("name")
@@ -135,9 +163,9 @@ def create_item():
   except Exception as e:
     return jsonify({"error": str(e)}), 500
 
-
 # DELETE: Deletar um item por ID
 @app.route("/items/<int:item_id>", methods=["DELETE"])
+@token_required
 def delete_item(item_id):
   try:
     conn = get_db_connection()
