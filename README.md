@@ -40,7 +40,9 @@ Execute o comando abaixo para iniciar todos os serviços definidos no Docker Com
 ```bash
 docker compose up -d --build
 
-🔐 Configuração do Keycloak e Autenticação
+---
+
+## 🔐 Configuração do Keycloak e Autenticação
 O Keycloak é o componente responsável pela gestão de identidades e emissão de tokens JWT.
 
 Criar e Configurar o Administrador
@@ -52,7 +54,10 @@ docker exec -it keycloak_lab /opt/keycloak/bin/kcadm.sh config credentials \
   --realm master \
   --user admin \
   --password <SUA_SENHA_ADMIN>
-🧪 Testando a API e o Fluxo de Segurança
+
+---
+
+## 🧪 Testando a API e o Fluxo de Segurança
 O fluxo padrão exige a obtenção de um token de acesso OIDC válido para consumir os endpoints protegidos da API Flask.
 
 1. Obter o Token JWT (Exemplo com o usuário de teste)
@@ -73,7 +78,10 @@ curl -X POST http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "Servidor Lab AppSec", "descricao": "Laboratório de isolamento e Keycloak"}'
-🛡️ Segurança Aplicada
+
+---
+
+## 🛡️ Segurança Aplicada
 Zero Hardcoded Secrets: Credenciais sensíveis e senhas de banco são injetadas via variáveis de ambiente seguras e gerenciadas por cofre.
 
 Validação Criptográfica: A API valida a assinatura dos tokens JWT em tempo de execução utilizando as chaves públicas JWKS fornecidas pelo Keycloak.
