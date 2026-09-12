@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql_local_lab
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=PasswordAppSec123!
+    ports:
+      - "1433:1433"
+    networks:
+      - lab-net
+
+  api:
+    build: .
+    container_name: api_python_lab
+    ports:
+      - "8080:80"
+    environment:
+      - DB_SERVER=db
+      - DB_USER=sa
+      - DB_PASSWORD=PasswordAppSec123!
+      - DB_NAME=appdb
+    depends_on:
+      - db
+    networks:
+      - lab-net
+
+networks:
+  lab-net:
+    driver: bridge
