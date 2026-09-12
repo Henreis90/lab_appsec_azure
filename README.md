@@ -39,7 +39,7 @@ Execute o comando abaixo para iniciar todos os serviços definidos no Docker Com
 
 ```bash
 docker compose up -d --build
-
+```
 ---
 
 ## 🔐 Configuração do Keycloak e Autenticação
@@ -48,37 +48,38 @@ O Keycloak é o componente responsável pela gestão de identidades e emissão d
 Criar e Configurar o Administrador
 Caso o bootstrap não crie o usuário admin automaticamente via variáveis de ambiente (KEYCLOAK_ADMIN), você pode configurá-lo e validá-lo via CLI no container:
 
-Bash
+```bash
 docker exec -it keycloak_lab /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8080 \
   --realm master \
   --user admin \
   --password <SUA_SENHA_ADMIN>
-
+```
 ---
 
 ## 🧪 Testando a API e o Fluxo de Segurança
 O fluxo padrão exige a obtenção de um token de acesso OIDC válido para consumir os endpoints protegidos da API Flask.
 
 1. Obter o Token JWT (Exemplo com o usuário de teste)
-Bash
+```bash
 TOKEN=$(curl -s -X POST "http://localhost:9080/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli" \
   -d "username=joao" \
   -d "password=<SENHA_DO_USUARIO>" \
   -d "grant_type=password" | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+```
 2. Consumir a Rota Protegida (GET)
 Bash
 curl -X GET http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN"
 3. Criar um Novo Registro no Banco (POST)
-Bash
+```bash
 curl -X POST http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "Servidor Lab AppSec", "descricao": "Laboratório de isolamento e Keycloak"}'
-
+```
 ---
 
 ## 🛡️ Segurança Aplicada
