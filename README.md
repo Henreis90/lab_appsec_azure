@@ -70,9 +70,10 @@ TOKEN=$(curl -s -X POST "http://localhost:9080/realms/master/protocol/openid-con
   -d "grant_type=password" | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
 ```
 2. Consumir a Rota Protegida (GET)
-Bash
+```bash
 curl -X GET http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN"
+```
 3. Criar um Novo Registro no Banco (POST)
 ```bash
 curl -X POST http://localhost:8080/items \
