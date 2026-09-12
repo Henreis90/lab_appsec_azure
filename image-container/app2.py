@@ -1,15 +1,15 @@
 import os
+import time
 from flask import Flask, jsonify, request
 import pymssql
 
 app = Flask(__name__)
 
 # Configurações do Banco pegas via Variáveis de Ambiente
-DB_SERVER = os.environ.get("DB_SERVER", "localhost")
-DB_USER = os.environ.get("DB_USER", "sqladmin")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "sua_senha")
+DB_SERVER = os.environ.get("DB_SERVER", "db")
+DB_USER = os.environ.get("DB_USER", "sa")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "PasswordAppSec123!")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
-
 
 def get_db_connection():
   return pymssql.connect(

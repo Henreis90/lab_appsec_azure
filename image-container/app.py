@@ -1,20 +1,44 @@
 import os
 import time
 from flask import Flask, jsonify, request
+import hvac
 import pymssql
 
 app = Flask(__name__)
 
-# Configurações do Banco pegas via Variáveis de Ambiente
+# Configurações do Vault e do Servidor pegas via Variáveis de Ambiente
+VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8200")
+VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "root-token-seguro")
 DB_SERVER = os.environ.get("DB_SERVER", "db")
-DB_USER = os.environ.get("DB_USER", "sa")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "PasswordAppSec123!")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
 
+
+def get_db_credentials_from_vault():
+  """Busca as credenciais do banco de dados dinamicamente no HashiCorp Vault."""
+  try:
+    client = hvac.Client(url=VAULT_URL, token=VAULT_TOKEN)
+
+    # Lê o segredo do caminho 'secret/data/db' (KV Versão 2)
+    secret_response = client.secrets.kv.v2.read_secret_version(
+        mount_point="secret", path="db"
+    )
+
+    db_user = secret_response["data"]["data"]["user"]
+    db_pass = secret_response["data"]["data"]["password"]
+    return db_user, db_pass
+  except Exception as e:
+    print(f"Erro ao buscar credenciais no Vault: {e}")
+    # Fallback opcional caso queira seguranca local de emergencia, ou lance a excecao
+    raise e
+
+
 def get_db_connection():
+  # Pega as credenciais atualizadas do Vault a cada nova conexão (ou você pode cachear se preferir)
+  db_user, db_pass = get_db_credentials_from_vault()
   return pymssql.connect(
-      server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+      server=DB_SERVER, user=db_user, password=db_pass, database=DB_NAME
   )
+
 
 # Loop de tentativas para aguardar o SQL Server subir
 print("Aguardando o SQL Server ficar pronto...")
@@ -23,8 +47,11 @@ attempts = 15  # Tenta por até 45 segundos (15 * 3s)
 
 while attempts > 0 and not connected:
   try:
+    # Para validar a conexão inicial e criar o banco, precisamos das credenciais do Vault
+    db_user, db_pass = get_db_credentials_from_vault()
+
     conn_master = pymssql.connect(
-        server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, database="master"
+        server=DB_SERVER, user=db_user, password=db_pass, database="master"
     )
     conn_master.autocommit(True)
     cursor_master = conn_master.cursor()
@@ -34,9 +61,12 @@ while attempts > 0 and not connected:
         """)
     conn_master.close()
     connected = True
-    print("Conectado ao SQL Server com sucesso!")
+    print("Conectado ao SQL Server e credenciais validadas via Vault!")
   except Exception as e:
-    print(f"Banco ainda iniciando... Tentativas restantes: {attempts}. Erro: {e}")
+    print(
+        f"Banco/Vault ainda iniciando... Tentativas restantes: {attempts}."
+        f" Erro: {e}"
+    )
     time.sleep(3)
     attempts -= 1
 
@@ -60,7 +90,8 @@ if connected:
     conn.close()
     print("Tabela 'items' verificada/criada com sucesso!")
   except Exception as e:
-    print(f"Erro ao criar tabela: {e}")  
+    print(f"Erro ao criar tabela: {e}")
+
 
 @app.route("/", methods=["GET"])
 def home():
