@@ -157,8 +157,8 @@ output "public_ip_address" {
 
 # Output para sabermos Usuario e Senha
 output "user_credentials" {
-  value { 
-    azurerm_linux_virtual_machine.vm.admin_username
-    azurerm_linux_virtual_machine.vm.admin_password
+  value = { 
+    username = azurerm_linux_virtual_machine.vm.admin_username
+    password = azurerm_linux_virtual_machine.vm.admin_password
     }
 }
