@@ -4,8 +4,9 @@ from functools import wraps
 from flask import Flask, jsonify, request
 import hvac
 import jwt  # Biblioteca PyJWT
-import pymssql
+#import pymssql
 import requests
+import pyodbc
 
 app = Flask(__name__)
 
@@ -18,20 +19,6 @@ VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8200")
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "root-token-seguro")
 DB_SERVER = os.environ.get("DB_SERVER", "db")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
-
-
-#def get_jwt_secret_from_vault():
-#  """Busca a chave secreta do JWT (ou usa a mesma do db) no Vault."""
-#  try:
-#    client = hvac.Client(url=VAULT_URL, token=VAULT_TOKEN)
-#    secret_response = client.secrets.kv.v2.read_secret_version(
-#        mount_point="secret", path="db"
-#    )
-#    # Para simplificar o lab, podemos usar a senha do banco ou uma chave específica do Vault como segredo do JWT
-#    return secret_response["data"]["data"]["password"]
-#  except Exception as e:
-#    print(f"Erro ao buscar segredo do JWT no Vault: {e}")
-#    return "fallback-secret-key"
 
 
 def get_db_credentials_from_vault():
@@ -48,12 +35,74 @@ def get_db_credentials_from_vault():
     raise e
 
 
-def get_db_connection():
-  db_user, db_pass = get_db_credentials_from_vault()
-  return pymssql.connect(
-      server=DB_SERVER, user=db_user, password=db_pass, database=DB_NAME
-  )
+#def get_db_connection():
+#  db_user, db_pass = get_db_credentials_from_vault()
+#  return pymssql.connect(
+#      server=DB_SERVER, user=db_user, password=db_pass, database=DB_NAME
+#  )
+#def get_db_connection():
+#    db_user, db_pass = get_db_credentials_from_vault()
+#    # String de conexão usando o ODBC Driver 18 instalado no container
+#    conn_str = (
+#        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+#        f"SERVER={DB_SERVER};"
+#        f"DATABASE={DB_NAME};"
+#        f"UID={db_user};"
+#        f"PWD={db_pass};"
+#        f"TrustServerCertificate=yes;"
+#    )
+#    return pyodbc.connect(conn_str)
 
+def get_db_connection():
+    db_user, db_pass = get_db_credentials_from_vault()
+    
+    # 1. Tenta garantir que o banco 'appdb' existe conectando primeiro ao 'master'
+    master_conn_str = (
+        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+        f"SERVER={DB_SERVER};"
+        f"DATABASE=master;"
+        f"UID={db_user};"
+        f"PWD={db_pass};"
+        f"TrustServerCertificate=yes;"
+    )
+    
+    # Aguarda o SQL Server responder (evita timeout se o container acabou de subir)
+    for i in range(10):
+        try:
+            temp_conn = pyodbc.connect(master_conn_str, timeout=3)
+            temp_conn.autocommit = True
+            cursor = temp_conn.cursor()
+            # Cria o banco se não existir
+            cursor.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{DB_NAME}') CREATE DATABASE {DB_NAME};")
+            temp_conn.close()
+            break
+        except Exception:
+            time.sleep(3)
+
+    # 2. Conecta no banco de dados final 'appdb' e garante que a tabela 'items' existe
+    conn_str = (
+        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+        f"SERVER={DB_SERVER};"
+        f"DATABASE={DB_NAME};"
+        f"UID={db_user};"
+        f"PWD={db_pass};"
+        f"TrustServerCertificate=yes;"
+    )
+    conn = pyodbc.connect(conn_str)
+    
+    # Garante a criação da tabela items se ela não existir
+    cursor = conn.cursor()
+    cursor.execute("""
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='items' and xtype='U')
+        CREATE TABLE items (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            name NVARCHAR(100) NOT NULL,
+            description NVARCHAR(255)
+        )
+    """)
+    conn.commit()
+    
+    return conn
 
 # --- DECORADOR DE VALIDAÇÃO DE JWT (O "Segurança" da API) ---
 def token_required(f):
@@ -150,18 +199,19 @@ def create_item():
   if not name:
     return jsonify({"error": "O campo 'name' é obrigatório"}), 400
 
-  try:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO items (name, description) VALUES (%s, %s)",
-        (name, description),
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Item criado com sucesso!"}), 201
-  except Exception as e:
-    return jsonify({"error": str(e)}), 500
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO items (name, description) VALUES (?, ?)",
+            (name, description),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Item criado com sucesso!"}), 201
+    except Exception as e:
+        print(f"Erro ao inserir item: {str(e)}") # Exibe no log do docker
+        return jsonify({"error": str(e)}), 500
 
 # DELETE: Deletar um item por ID
 @app.route("/items/<int:item_id>", methods=["DELETE"])
