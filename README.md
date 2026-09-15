@@ -42,6 +42,13 @@ docker compose up -d --build
 ```
 ---
 
+## Testar a Rota Padrão (GET)
+
+```bash
+curl -X GET http://localhost:8080/
+```
+---
+
 ## 🔐 Configuração do Keycloak e Autenticação
 O Keycloak é o componente responsável pela gestão de identidades e emissão de tokens JWT.
 
@@ -53,7 +60,21 @@ docker exec -it keycloak_lab /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8080 \
   --realm master \
   --user admin \
-  --password <SUA_SENHA_ADMIN>
+  --password KeycloakAdminSecure123
+```
+---
+
+## 🔐 Criando usuário novo 
+
+```bash
+docker exec -it keycloak_lab /opt/keycloak/bin/kcadm.sh create users \
+-r master \
+-s username=joao \
+-s enabled=true && \
+docker exec -it keycloak_lab /opt/keycloak/bin/kcadm.sh set-password \
+-r master \
+--username joao \
+--new-password Senha123!
 ```
 ---
 
@@ -66,21 +87,22 @@ TOKEN=$(curl -s -X POST "http://localhost:9080/realms/master/protocol/openid-con
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli" \
   -d "username=joao" \
-  -d "password=<SENHA_DO_USUARIO>" \
+  -d "password=Senha123!" \
   -d "grant_type=password" | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
 ```
-2. Consumir a Rota Protegida (GET)
-```bash
-curl -X GET http://localhost:8080/items \
-  -H "Authorization: Bearer $TOKEN"
-```
-3. Criar um Novo Registro no Banco (POST)
+2. Criar um Novo Registro no Banco (POST)
 ```bash
 curl -X POST http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "Servidor Lab AppSec", "descricao": "Laboratório de isolamento e Keycloak"}'
 ```
+3. Consumir a Rota Protegida (GET)
+```bash
+curl -X GET http://localhost:8080/items \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ---
 
 ## 🛡️ Segurança Aplicada
@@ -95,9 +117,9 @@ Isolamento Perimétrico: Apenas o Nginx expõe portas para o mundo externo; os d
 
 Aqui está a lista completa de todas as rotas e métodos disponíveis na sua API com base no código desenvolvido:
 
-| Método | Endpoint | Descrição / Ação | Exemplo de Uso (curl) |
-| --- | --- | --- | --- |
-| **GET** | `/` | Verifica o status da API (health check). | `curl http://localhost:8080/` |
-| **GET** | `/items` | Lista todos os itens cadastrados no banco de dados. | `curl http://localhost:8080/items` |
-| **POST** | `/items` | Cria/insere um novo item no banco de dados. | `curl -X POST http://localhost:8080/items -H "Content-Type: application/json" -d '{"name": "Item 1", "description": "Teste"}'` |
-| **DELETE** | `/items/<id>` | Deleta um item específico com base no ID informado. | `curl -X DELETE http://localhost:8080/items/1` |
+| Método | Endpoint | Descrição / Ação | Exemplo de Uso (curl) | Protegida |
+| --- | --- | --- | --- | --- |
+| **GET** | `/` | Verifica o status da API (health check). | `curl http://localhost:8080/` | NÃO |
+| **GET** | `/items` | Lista todos os itens cadastrados no banco de dados. | `curl http://localhost:8080/items` | SIM |
+| **POST** | `/items` | Cria/insere um novo item no banco de dados. | `curl -X POST http://localhost:8080/items -H "Content-Type: application/json" -d '{"name": "Item 1", "description": "Teste"}'` | SIM |
+| **DELETE** | `/items/<id>` | Deleta um item específico com base no ID informado. | `curl -X DELETE http://localhost:8080/items/1` |  SIM |
