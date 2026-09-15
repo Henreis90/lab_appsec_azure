@@ -7,6 +7,7 @@ import jwt  # Biblioteca PyJWT
 #import pymssql
 import requests
 import pyodbc
+import time
 
 app = Flask(__name__)
 
@@ -179,10 +180,14 @@ def home():
 def get_items():
   try:
     conn = get_db_connection()
-    cursor = conn.cursor(as_dict=True)
+    cursor = conn.cursor()
     cursor.execute("SELECT id, name, description FROM items")
-    items = cursor.fetchall()
+    
+    columns = [column[0] for column in cursor.description]
+    items = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
     conn.close()
+    
     return jsonify(items), 200
   except Exception as e:
     return jsonify({"error": str(e)}), 500
@@ -199,19 +204,23 @@ def create_item():
   if not name:
     return jsonify({"error": "O campo 'name' é obrigatório"}), 400
 
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO items (name, description) VALUES (?, ?)",
-            (name, description),
-        )
-        conn.commit()
-        conn.close()
-        return jsonify({"message": "Item criado com sucesso!"}), 201
-    except Exception as e:
-        print(f"Erro ao inserir item: {str(e)}") # Exibe no log do docker
-        return jsonify({"error": str(e)}), 500
+  try:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        "INSERT INTO items (name, description) VALUES (?, ?)",
+        (name, description),
+    )
+
+    conn.commit()
+    conn.close()
+        
+    return jsonify({"message": "Item criado com sucesso!"}), 201
+  except Exception as e:
+       # print(f"Erro ao inserir item: {str(e)}")
+    print("ERRO CAPTURADO:", repr(e))
+    return jsonify({"error": str(e)}), 500
 
 # DELETE: Deletar um item por ID
 @app.route("/items/<int:item_id>", methods=["DELETE"])
@@ -220,7 +229,10 @@ def delete_item(item_id):
   try:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM items WHERE id = %s", (item_id,))
+    cursor.execute(
+        "DELETE FROM items WHERE id = ?",
+        (item_id,)
+    )
     conn.commit()
     conn.close()
     return jsonify({"message": f"Item {item_id} deletado com sucesso!"}), 200
