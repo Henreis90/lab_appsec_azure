@@ -102,7 +102,11 @@ curl -X POST http://localhost:8080/items \
 curl -X GET http://localhost:8080/items \
   -H "Authorization: Bearer $TOKEN"
 ```
-
+---
+4. Deletar registro (GET)
+```bash
+curl -X DELETE http://localhost:8080/items/1 -H "Authorization: Bearer $TOKEN"
+```
 ---
 
 ## 🛡️ Segurança Aplicada
